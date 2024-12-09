@@ -5,6 +5,7 @@ const path = require('path');
 const host = "http://127.0.0.1";
 const port = 3003;
 const dbRouters = require('./routers/posts');
+const db = require("./config/db")
 
 app.use(cors({
   origin: "http://localhost:5173",
@@ -13,6 +14,11 @@ app.use(cors({
 }));
 
 app.use(express.json());
+
+
+db.getConnection()
+  .then(() => console.log('Connesso al database MySQL!'))
+  .catch(err => console.error('Errore durante la connessione al database:', err));
 
 app.use("/posts", dbRouters);
 
