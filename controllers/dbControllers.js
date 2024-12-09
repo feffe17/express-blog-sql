@@ -1,129 +1,137 @@
-const fs = require("fs");
-const path = require("path");
-const db = require("../db.json");
-const { error } = require("console");
+const db = require("../config/db");
 
-exports.index = (req, res) => {
+exports.index = async (req, res) => {
   const { tag } = req.query;
 
-  let filteredPosts = db;
-  if (tag) {
-    filteredPosts = db.filter(post => post.tags.includes(tag));
-  }
+  try {
+    let query = 'SELECT * FROM posts';
+    let params = [];
 
-  res.json({
-    counter: filteredPosts.length,
-    lista: filteredPosts,
-  });
+    if (tag) {
+      query += ' WHERE FIND_IN_SET(?, tags)';
+      params.push(tag);
+    }
+
+    const [rows] = await db.execute(query, params);
+
+    res.json({
+      counter: rows.length,
+      lista: rows,
+    });
+  } catch (err) {
+    console.error('Errore durante il recupero dei post:', err);
+    res.status(500).json({ message: 'Errore interno del server' });
+  }
 };
 
-exports.getPostById = (req, res) => {
-  // console.log("ID ricevuto:", req.params.id);
+exports.getPostById = async (req, res) => {
   const { id } = req.params;
-  const post = db.find(post => post.id === parseInt(id)); // O usa il tuo database
-  if (post) {
-    res.json(post);
-  } else {
-    res.status(404).json({ message: "Post non trovato" });
+
+  try {
+    const [rows] = await db.execute('SELECT * FROM posts WHERE id = ?', [id]);
+
+    if (rows.length > 0) {
+      res.json(rows[0]);
+    } else {
+      res.status(404).json({ message: 'Post non trovato' });
+    }
+  } catch (err) {
+    console.error('Errore durante il recupero del post:', err);
+    res.status(500).json({ message: 'Errore interno del server' });
   }
 };
 
-exports.show = (req, res) => {
-  const post = db.find(
-    (post) => post.title.trim().toLowerCase() === req.params.title.trim().toLowerCase()
-  );
+exports.show = async (req, res) => {
+  const { title } = req.params;
 
-  if (post) {
-    res.json(post);
-  } else {
-    res.status(404).json({ message: "Post non trovato" });
+  try {
+    const [rows] = await db.execute('SELECT * FROM posts WHERE LOWER(TRIM(title)) = LOWER(TRIM(?))', [title]);
+
+    if (rows.length > 0) {
+      res.json(rows[0]);
+    } else {
+      res.status(404).json({ message: 'Post non trovato' });
+    }
+  } catch (err) {
+    console.error('Errore durante il recupero del post:', err);
+    res.status(500).json({ message: 'Errore interno del server' });
   }
 };
 
-exports.store = (req, res) => {
+exports.store = async (req, res) => {
   const { title, content, tags, published } = req.body;
 
   if (!title || !content || !tags) {
-    return res.status(400).json({ message: "Tutti i campi sono obbligatori" });
+    return res.status(400).json({ message: 'Tutti i campi sono obbligatori' });
   }
 
-  const newPost = {
-    id: db.length + 1,
-    title,
-    content,
-    tags,
-    published: published || false,
-  };
+  try {
+    const [result] = await db.execute(
+      'INSERT INTO posts (title, content, tags, published) VALUES (?, ?, ?, ?)',
+      [title, content, tags, published || false]
+    );
 
-  db.push(newPost);
+    const newPost = {
+      id: result.insertId,
+      title,
+      content,
+      tags,
+      published: published || false,
+    };
 
-  fs.writeFile(
-    path.join(__dirname, "../db.json"),
-    JSON.stringify(db, null, 2),
-    (err) => {
-      if (err) {
-        console.error("Errore durante il salvataggio del file:", err);
-        return res.status(500).json({ message: "Errore interno del server" });
-      }
-      res.status(201).json(newPost);
-    }
-  );
+    res.status(201).json(newPost);
+  } catch (err) {
+    console.error('Errore durante l\'inserimento del post:', err);
+    res.status(500).json({ message: 'Errore interno del server' });
+  }
 };
 
-exports.update = (req, res) => {
+exports.update = async (req, res) => {
   const { title } = req.params;
   const { content, tags, published } = req.body;
 
-  const postIndex = db.findIndex(post => post.title === title);
-  if (postIndex === -1) {
-    return res.status(404).json({ message: "Post non trovato" });
-  }
+  try {
+    const [rows] = await db.execute('SELECT * FROM posts WHERE title = ?', [title]);
 
-  if (content) db[postIndex].content = content;
-  if (tags) db[postIndex].tags = tags;
-  if (typeof published === "boolean") db[postIndex].published = published;
-
-  fs.writeFile(
-    path.join(__dirname, "../db.json"),
-    JSON.stringify(db, null, 2),
-    (err) => {
-      if (err) {
-        console.error("Errore durante il salvataggio del file:", err);
-        return res.status(500).json({ message: "Errore interno del server" });
-      }
-      res.status(200).json(db[postIndex]);
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Post non trovato' });
     }
-  );
+
+    const query = 'UPDATE posts SET content = ?, tags = ?, published = ? WHERE title = ?';
+    const params = [content || rows[0].content, tags || rows[0].tags, published ?? rows[0].published, title];
+
+    await db.execute(query, params);
+
+    res.status(200).json({
+      id: rows[0].id,
+      title,
+      content: content || rows[0].content,
+      tags: tags || rows[0].tags,
+      published: published ?? rows[0].published,
+    });
+  } catch (err) {
+    console.error('Errore durante l\'aggiornamento del post:', err);
+    res.status(500).json({ message: 'Errore interno del server' });
+  }
 };
 
-exports.destroy = (req, res) => {
+exports.destroy = async (req, res) => {
   const { title } = req.params;
-  console.log("Titolo ricevuto dalla richiesta:", title);
-  console.log("Titoli nel database:", db.map(post => post.title));
 
-  const postIndex = db.findIndex(
-    (post) => post.title && post.title.trim().toLowerCase() === title.trim().toLowerCase()
-  );
+  try {
+    const [rows] = await db.execute('SELECT * FROM posts WHERE LOWER(TRIM(title)) = LOWER(TRIM(?))', [title]);
 
-  if (postIndex === -1) {
-    return res.status(404).json({ message: "Post non trovato" });
-  }
-
-  db.splice(postIndex, 1);
-
-  fs.writeFile(
-    path.join(__dirname, "../db.json"),
-    JSON.stringify(db, null, 2),
-    (err) => {
-      if (err) {
-        console.error("Errore durante il salvataggio del file:", err);
-        return res.status(500).json({ message: "Errore interno del server" });
-      }
-      res.status(200).json({
-        message: "Post eliminato correttamente",
-        lista: db,
-      });
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Post non trovato' });
     }
-  );
-};
 
+    await db.execute('DELETE FROM posts WHERE LOWER(TRIM(title)) = LOWER(TRIM(?))', [title]);
+
+    res.status(200).json({
+      message: 'Post eliminato correttamente',
+    });
+  } catch (err) {
+    console.error('Errore durante l\'eliminazione del post:', err);
+    res.status(500).json({ message: 'Errore interno del server' });
+  }
+};
